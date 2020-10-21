@@ -3,14 +3,13 @@ import os
 import re
 from io import BytesIO
 from struct import pack, unpack
-from subprocess import call
 from sys import argv
-from shutil import move
 from math import ceil
 
 imap_pos = 0xc
 int_mmap_pos = 0x18
 mmap_pos = 0x2c
+
 
 def read_ident(f):
 	end = None
@@ -21,32 +20,36 @@ def read_ident(f):
 		end = '>'
 	return end
 
+
 def read_tag(f, endian='<'):
 	s = f.read(4)
 	if endian == '<':
 		s = s[::-1]
 	return(s.decode('ascii'))
 
+
 def read_i16(f, endian='<'):
 	data, = unpack(endian+'H', f.read(2))
 	return(data)
 
+
 def read_i32(f, endian='<'):
 	data, = unpack(endian+'I', f.read(4))
 	return(data)
+
 
 def write_i32(f, data, endian='<'):
 	data = pack(endian+'I', data)
 	f.write(data)
 	return
 
+
 def parse_dict(data, endian='<'):
-	import binascii
 	d = BytesIO(data[8:])
 	toclen, = unpack(endian+'I', d.read(4))
 	if toclen > 0x10000:
 		# Win16 EXEs swap endianness after the tag size
-		endian = {'>':'<','<':'>'}[endian]
+		endian = {'>': '<', '<': '>'}[endian]
 		d.seek(0)
 		toclen, = unpack(endian+'I', d.read(4))
 	if endian == '<':
@@ -56,7 +59,7 @@ def parse_dict(data, endian='<'):
 	d.seek(0x10)
 	len_names, = unpack(endian+'I', d.read(4))
 	d.seek(0x18)
-	dummy = d.read(toclen)
+	d.read(toclen)
 	names = []
 	for i in range(len_names):
 		lname, = unpack(endian+'I', d.read(4))
@@ -65,7 +68,7 @@ def parse_dict(data, endian='<'):
 			filler = 4 - filler
 		fname = d.read(lname)
 		assert lname == len(fname)
-		dummy = d.read(filler)
+		d.read(filler)
 		try:
 			names.append(fname.decode('utf-8'))
 		except UnicodeDecodeError:
@@ -75,8 +78,8 @@ def parse_dict(data, endian='<'):
 
 file = argv[1]
 f = open(file, 'rb').read()
-win_file = re.search(rb'XFIR.{4}LPPA', f)
-mac_file = re.search(rb'RIFX.{4}APPL', f)
+win_file = re.search(rb'XFIR.{4}LPPA', f, re.S)
+mac_file = re.search(rb'RIFX.{4}APPL', f, re.S)
 if win_file:
 	off = win_file.start()
 elif mac_file:
@@ -89,7 +92,7 @@ else:
 			f = BytesIO(f[off_fix_check.start():])
 			endian = read_ident(f)
 			size, = unpack(endian+'I', f.read(4))
-			f.seek(0) # Seek to the beginning
+			f.seek(0)  # Seek to the beginning
 			open('NEW.'.join([outfile, ext]), 'wb').write(f.read(size + 8))
 	else:
 		print('not a Director application')
@@ -143,48 +146,50 @@ try:
 	os.mkdir(outfolder)
 except FileExistsError:
 	pass
-for n in [f for f in files if not re.search(r'\.x32$', f[0], re.I)]: # [[name, file], [name, file], ...]
+
+for n in [f for f in files if not re.search(r'\.x(?:16|32)$', f[0], re.I)]:
 	name, file = n
 	if win_file:
 		oname, = re.findall(r'([^\\]+)$', name)
-	else: 
+	else:
 		# Director uses `:` as the path separator on Mac, even Intel/OSX!
 		oname, = re.findall(r'([^:]+)$', name)
 	off, _ = file
-	f.seek(off)
-	print('Original file path: ' + os.path.join(name))
+	# f.seek(off)
+	print(f'Original file path: {os.path.join(name)}')
 	# The size indicated in the memory map is sometimes wrong (??),
 	# so we need to get the real size from the header of the Director file
-	header = BytesIO(f.read(12))
-	header.seek(0x4)
-	size, = unpack(endian+'I', header.read(0x4))
+	f.seek(off+4)
+	size, = unpack(endian+'I', f.read(0x4))
 	size += 8
 	f.seek(off)
 	temp_file = BytesIO(f.read(size))
+	temp_file_endian = read_ident(temp_file)
 	temp_file.seek(0x8)
-	file_type = read_tag(temp_file, endian)
-	if oname.lower()[-4:] == '.dir':
+	file_type = read_tag(temp_file, temp_file_endian)
+	extension = {'.dir': ['.dxr', '.dcr'], '.cst': ['.cxt', '.cct']}
+	oname_ext = oname.lower()[-4:]
+	if oname_ext in extension:
 		if file_type == 'MV93':
-			oname = oname[:-4] + '.dxr'
+			oname_ext = extension[oname_ext][0]
 		elif file_type == 'FGDM':
-			oname = oname[:-4] + '.dcr'
-	elif oname.lower()[-4:] == '.cst':
-		if file_type == 'MV93':
-			oname = oname[:-4] + '.cxt'
-		elif file_type == 'FGDC':
-			oname = oname[:-4] + '.cct'
+			oname_ext = extension[oname_ext][1]
+		if oname[-4:].isupper():
+			oname_ext = oname_ext.upper()
+		oname = oname[:-4] + oname_ext
+
 	if file_type in ['FGDM', 'FGDC']:
 		temp_file.seek(0)
 		open(os.path.join(outfolder, oname), 'wb').write(temp_file.read())
 		continue
 	temp_file.seek(0x36)
-	mmap_res_len = read_i16(temp_file, endian);
+	mmap_res_len = read_i16(temp_file, temp_file_endian)
 	temp_file.seek(0x30)
-	mmap_ress_len = read_i32(temp_file, endian) - 0x20;
+	mmap_ress_len = read_i32(temp_file, temp_file_endian) - 0x20
 	temp_file.seek(0x54)
-	relative = read_i32(temp_file, endian)
+	relative = read_i32(temp_file, temp_file_endian)
 	temp_file.seek(int_mmap_pos)
-	write_i32(temp_file, mmap_pos, endian)
+	write_i32(temp_file, mmap_pos, temp_file_endian)
 	for i in range(mmap_ress_len // mmap_res_len):
 		pos = (i * mmap_res_len) + 0x54
 		temp_file.seek(pos)
@@ -192,7 +197,7 @@ for n in [f for f in files if not re.search(r'\.x32$', f[0], re.I)]: # [[name, f
 		if absolute:
 			absolute -= relative
 			temp_file.seek(pos)
-			write_i32(temp_file, absolute, endian)
+			write_i32(temp_file, absolute, temp_file_endian)
 	temp_file.seek(0)
 	open(os.path.join(outfolder, oname), 'wb').write(temp_file.read())
 
