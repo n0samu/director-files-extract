@@ -1,8 +1,7 @@
 #!/usr/bin/python3
 import os
-import re
 from io import BytesIO
-from struct import pack, unpack
+from struct import unpack
 from sys import argv
 
 def read_ident(f):

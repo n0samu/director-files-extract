@@ -184,14 +184,14 @@ for n in [f for f in files if not re.search(r'\.x(?:16|32)$', f[0], re.I)]:
 		continue
 	temp_file.seek(0x36)
 	mmap_res_len = read_i16(temp_file, temp_file_endian)
-	temp_file.seek(0x30)
-	mmap_ress_len = read_i32(temp_file, temp_file_endian) - 0x20
+	temp_file.seek(0x3C)
+	mmap_res = read_i32(temp_file, temp_file_endian) - 1  # includes RIFX
 	temp_file.seek(0x54)
 	relative = read_i32(temp_file, temp_file_endian)
 	temp_file.seek(int_mmap_pos)
 	write_i32(temp_file, mmap_pos, temp_file_endian)
-	for i in range(mmap_ress_len // mmap_res_len):
-		pos = (i * mmap_res_len) + 0x54
+	for i in range(mmap_res):
+		pos = 0x68 + (i * mmap_res_len)
 		temp_file.seek(pos)
 		absolute = read_i32(temp_file, endian)
 		if absolute:
