@@ -5,7 +5,7 @@ Usage: `python shock.py application.exe`
 
 Files will be extracted to a folder named after the application file.
 
-This script was created by eientei, with bugfixes contributed by myself (nosamu).
+This script was created by eientei, with bugfixes contributed by Tomysshadow and myself (nosamu).
 
 # fix-director-files
 This Python script checks whether Director files have the correct extension and size. It automatically trims extra bytes and fixes the file extension if necessary.
