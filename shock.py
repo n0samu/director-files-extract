@@ -112,15 +112,16 @@ if not off:
 
 f.seek(mmap_pos)
 assert read_tag(f, endian) == 'mmap'
-mmap_ress_len = read_i32(f, endian) - 0x20
 f.seek(mmap_pos + 0xa)
 mmap_res_len = read_i16(f, endian)
+f.seek(mmap_pos + 0x10)
+mmap_res_count = read_i32(f, endian)
 mmap_ress_pos = mmap_pos + 0x20
 f.seek(mmap_ress_pos + 0x8)
 REL = read_i32(f, endian)
 files = []
 names = None
-for i in range(ceil(mmap_ress_len / mmap_res_len)):
+for i in range(mmap_res_count):
 	f.seek((i * mmap_res_len) + mmap_ress_pos)
 	tag = read_tag(f, endian)
 	size, off = unpack(endian+'II', f.read(0x8))
@@ -133,10 +134,6 @@ for i in range(ceil(mmap_ress_len / mmap_res_len)):
 	elif tag == 'Dict':
 		f.seek(off)
 		names = parse_dict(f.read(size), endian)
-	else:
-		# Don't process anything after Files (junk data can screw this up)
-		if len(files) > 1:
-			break
 
 files = list(zip(names, files))
 outfolder, _ = os.path.splitext(argv[1])
