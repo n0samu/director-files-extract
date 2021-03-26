@@ -52,14 +52,12 @@ def parse_dict(data, endian='<'):
 		endian = {'>': '<', '<': '>'}[endian]
 		d.seek(0)
 		toclen, = unpack(endian+'I', d.read(4))
-	if endian == '<':
-		toclen += 4
-	else:
-		toclen += 2  # ?????????
 	d.seek(0x10)
 	len_names, = unpack(endian+'I', d.read(4))
 	d.seek(0x18)
 	d.read(toclen)
+	unk1 = read_i16(d, endian)
+	d.read(unk1 - 0x12)  # ??????????
 	names = []
 	for i in range(len_names):
 		lname, = unpack(endian+'I', d.read(4))
@@ -157,8 +155,7 @@ for n in [f for f in files if not re.search(r'\.x(?:16|32)$', f[0], re.I)]:
 	# The size indicated in the memory map is sometimes wrong (??),
 	# so we need to get the real size from the header of the Director file
 	f.seek(off+4)
-	size, = unpack(endian+'I', f.read(0x4))
-	size += 8
+	size = read_i32(f, endian) + 8
 	f.seek(off)
 	temp_file = BytesIO(f.read(size))
 	temp_file_endian = read_ident(temp_file)
