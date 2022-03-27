@@ -4,7 +4,7 @@ import re
 from io import BytesIO
 from struct import pack, unpack
 from sys import argv
-from math import ceil
+from zlib import decompress
 
 imap_pos = 0xc
 int_mmap_pos = 0x18
@@ -12,20 +12,21 @@ mmap_pos = 0x2c
 
 
 def read_ident(f):
-	end = None
 	sig = f.read(4)
-	if sig == b'XFIR':
+	if sig in [b'XFIR', b'FFIR']:
 		end = '<'
-	elif sig == b'RIFX':
+	elif sig in [b'RIFX', b'RIFF']:
 		end = '>'
+	else:
+		end = None
 	return end
 
 
 def read_tag(f, endian='<'):
-	s = f.read(4)
+	tag = f.read(4)
 	if endian == '<':
-		s = s[::-1]
-	return(s.decode('ascii'))
+		tag = tag[::-1]
+	return(tag.decode('ascii'))
 
 
 def read_i16(f, endian='<'):
@@ -61,12 +62,9 @@ def parse_dict(data, endian='<'):
 	names = []
 	for i in range(len_names):
 		lname, = unpack(endian+'I', d.read(4))
-		filler = lname % 4
-		if filler:
-			filler = 4 - filler
 		fname = d.read(lname)
 		assert lname == len(fname)
-		d.read(filler)
+		d.read(-lname % 4)
 		try:
 			names.append(fname.decode('utf-8'))
 		except UnicodeDecodeError:
@@ -83,31 +81,16 @@ if win_file:
 elif mac_file:
 	off = mac_file.start()
 else:
-	off_fix_check = re.search(rb'(?:XFIR|RIFX).{4}(?:MV93|39VM)', f)
-	if off_fix_check:
-		if off_fix_check.start() != 0:
-			outfile, ext = os.path.splitext(argv[1])
-			f = BytesIO(f[off_fix_check.start():])
-			endian = read_ident(f)
-			size, = unpack(endian+'I', f.read(4))
-			f.seek(0)  # Seek to the beginning
-			open('NEW.'.join([outfile, ext]), 'wb').write(f.read(size + 8))
-	else:
-		print('not a Director application')
-		exit(1)
+	print('not a Director application')
+	exit(1)
 
 print(f'SW file found at 0x{off:x}')
-# projector = f[:off]
 f = BytesIO(f[off:])
 endian = read_ident(f)
 f.seek(imap_pos)
 assert read_tag(f, endian) == 'imap'
 f.seek(0x8, 1)
 off = unpack(endian+'I', f.read(4))[0] - mmap_pos
-if not off:
-	print('nothing to do')
-	exit(1)
-
 f.seek(mmap_pos)
 assert read_tag(f, endian) == 'mmap'
 f.seek(mmap_pos + 0xa)
@@ -142,19 +125,17 @@ try:
 except FileExistsError:
 	pass
 
-for n in [f for f in files if not re.search(r'\.x(?:16|32)$', f[0], re.I)]:
-	name, file = n
+for name, file in [f for f in files if not re.search(r'\.x(?:16|32)$', f[0], re.I)]:
 	if win_file:
 		oname, = re.findall(r'([^\\]+)$', name)
 	else:
 		# Director uses `:` as the path separator on Mac, even Intel/OSX!
 		oname, = re.findall(r'([^:]+)$', name)
 	off, _ = file
-	# f.seek(off)
-	print(f'Original file path: {os.path.join(name)}')
+	print(f'Original file path: {os.path.join(name)} @ 0x{off:x}')
 	# The size indicated in the memory map is sometimes wrong (??),
 	# so we need to get the real size from the header of the Director file
-	f.seek(off+4)
+	f.seek(off + 4)
 	size = read_i32(f, endian) + 8
 	f.seek(off)
 	temp_file = BytesIO(f.read(size))
@@ -172,10 +153,36 @@ for n in [f for f in files if not re.search(r'\.x(?:16|32)$', f[0], re.I)]:
 			oname_ext = oname_ext.upper()
 		oname = oname[:-4] + oname_ext
 
+	oname = oname.replace('/', '_')
+
 	if file_type in ['FGDM', 'FGDC']:
 		temp_file.seek(0)
 		open(os.path.join(outfolder, oname), 'wb').write(temp_file.read())
 		continue
+	elif file_type == 'Xtra':
+		pos = temp_file.tell()
+		if temp_file.read(1) != b'\x00':
+			temp_file.seek(pos)
+		tag = ''
+		size = 0
+		while tag not in ['XTdf', 'FILE']:
+			if tag == 'Xinf':
+				from binascii import hexlify
+				print(hexlify(temp_file.read(size)).decode('ascii'))
+				size = 0
+			temp_file.read(size)
+			tag = read_tag(temp_file, temp_file_endian)
+			size = read_i32(temp_file, temp_file_endian)
+			size += -size % 2
+			if tag == 'FILE':
+				temp_file.read(0x1C)
+		if size:
+			d = decompress(temp_file.read(size))
+			open(os.path.join(outfolder, oname), 'wb').write(d)
+		else:
+			temp_file.read(size)
+		continue
+
 	temp_file.seek(0x36)
 	mmap_res_len = read_i16(temp_file, temp_file_endian)
 	temp_file.seek(0x3C)
@@ -192,7 +199,9 @@ for n in [f for f in files if not re.search(r'\.x(?:16|32)$', f[0], re.I)]:
 			absolute -= relative
 			temp_file.seek(pos)
 			write_i32(temp_file, absolute, temp_file_endian)
+	temp_file.seek(-4, 2)
+	if temp_file.read(4) != b'\x00\x00\x00\x00':
+		temp_file.seek(-4, 2)
+		write_i32(temp_file, 0, temp_file_endian)
 	temp_file.seek(0)
 	open(os.path.join(outfolder, oname), 'wb').write(temp_file.read())
-
-# open(os.path.join(outfolder, 'projector.exe'), 'wb').write(projector)
